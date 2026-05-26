@@ -1,63 +1,11 @@
-# Delta Robot Project (WIP)
+# Delta GUI for ESP32 Delta Robot
 
-A personal engineering project to design and build a 3-DOF Delta Robot, from
-CAD and 3D-printed parts to embedded control, Python desktop control, motion
-testing, and gripper experiments.
-
-## Current Status
-
-- Project stage: **Work in Progress**
-- Mechanical/CAD design is available
-- Prototype integration and ESP32 control are in progress
-- Python GUI is available for serial control, testing, and visualization
-- MG90S gripper servo control is included in the current firmware/app flow
-- Final calibration and production-ready behavior are not finished yet
-
-## What Is Included Right Now
-
-- CAD assembly snapshots
-- STL files for 3D printing (`filein3d_STL`)
-- Assembly file (`assembly.sldasm`)
-- ESP32 firmware (`napcode/code/code.ino`)
-- Python desktop app (`napcode/code/main.py`)
-- Calibration measurement template (`napcode/code/calibration_measurements.md`)
-- Reference images used for documentation
-
-## Project Gallery
-
-### Complete Assembly View
-![Complete assembly CAD view](image/83a0624d-d194-4f59-b114-7ddad7cc7ad6.jpg)
-Overall CAD assembly of the Delta Robot frame, motor mounts, and arm linkage.
-
-### Exploded Assembly View
-![Exploded assembly CAD view](image/55de9165-3945-4e72-befe-00b2a7845b0c.jpg)
-Exploded view showing how structural and moving components fit together.
-
-### Top View Measurement
-![Top view CAD measurement](image/top.jpeg)
-Top view with geometric spacing measurement used for frame and actuator placement checks.
-
-### Side View Measurement
-![Side view CAD measurement](image/side.jpeg)
-Side view with height/clearance measurement for workspace and vertical layout validation.
-
-## Repository Highlights
-
-- `image/`: screenshots, measurement views, and CAD references
-- `image/filein3d_STL/`: printable STL component set
-- `napcode/code/`: Python desktop app and ESP32 firmware
-- `napcode/code/code.ino`: ESP32 JSON-over-Serial firmware
-- `napcode/code/main.py`: desktop app entry point
-- `napcode/code/calibration_measurements.md`: robot measurement worksheet
-
-## Desktop App And Firmware
-
-The desktop app is built with Python, CustomTkinter, PySerial, Matplotlib, and
-NumPy. It provides compact controls on the left, a Matplotlib robot
-visualization on the right, menu items for plots, camera support, and a log
+Python desktop app + ESP32 firmware for testing a 3-motor delta robot. The UI
+is styled after `grzesiek2201/Delta-Robot`: compact controls on the left,
+Matplotlib robot visualization on the right, menu items for plots, and a log
 console at the bottom.
 
-The serial protocol is JSON-over-Serial for the current ESP32 firmware.
+The serial protocol remains JSON-over-Serial for the current ESP32 firmware.
 
 ## Hardware Mapping
 
@@ -94,7 +42,7 @@ MG90S gripper:
 ## Install
 
 ```bash
-pip install customtkinter pyserial matplotlib numpy opencv-python pillow
+pip install customtkinter pyserial matplotlib numpy
 ```
 
 Arduino libraries:
@@ -106,11 +54,10 @@ Arduino libraries:
 
 ## Run
 
-1. Upload `napcode/code/code.ino` to the ESP32.
+1. Upload `code.ino` to the ESP32.
 2. Start the desktop app:
 
 ```bash
-cd napcode/code
 python main.py
 ```
 
@@ -126,7 +73,7 @@ python main.py
 6. Use `Rotate In Place Test` for the temporary motor-step pattern.
 7. Use `Gripper Servo MG90S` to test open/close before running pick/place.
 8. Use `Pick From A To B Simulation` for a step-position demo sequence. The
-   sequence closes the gripper at Position A and opens it at Position B.
+   sequence now closes the gripper at Position A and opens it at Position B.
 9. Use `Position` + `Move` only after IK config is correct for the real robot.
 
 `Emergency Stop` stops app sequences and sends `{"cmd":"stop"}`. It does not
@@ -173,23 +120,6 @@ Gripper status fields are included in normal status responses:
 {"gripperAttached":true,"gripperAngle":180,"gripperOpenAngle":180,"gripperClosedAngle":50}
 ```
 
-## Next Milestones
-
-- Finish mechanical assembly validation
-- Refine control firmware and motion sequencing
-- Add kinematics and trajectory testing
-- Complete calibration measurements
-- Tune repeatability and accuracy
-- Publish final demo and full build guide
-
-## Tools and Stack
-
-- CAD / 3D design workflow
-- 3D-printed mechanical parts (STL)
-- Embedded control (Arduino/ESP-style `.ino` workflow)
-- ESP32, DRV8825, limit switches, MG90S servo
-- Python desktop GUI with serial communication and robot visualization
-
-## Note
-
-This repository is actively updated while the robot is being developed.
+The Program menu from the reference app is present as a placeholder only. The
+original repo uses a different command protocol, so program upload was not
+copied into this ESP32 JSON app.
