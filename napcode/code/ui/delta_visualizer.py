@@ -26,6 +26,9 @@ VIEW_HOME_THETA_DEG = 62.0
 VIEW_HOME_TCP_Z = -360.0
 VIEW_HOME_BASE_THETA_DEG = 55.0
 VIEW_HOME_BASE_TCP_Z = -330.0
+VIEW_SIGN_A = 1
+VIEW_SIGN_B = 1
+VIEW_SIGN_C = 1
 
 
 class DeltaVisualizer:
@@ -43,6 +46,8 @@ class DeltaVisualizer:
         self.angle_history = deque(maxlen=120)
         self.view_home_theta_deg = VIEW_HOME_THETA_DEG
         self.view_home_tcp_z = VIEW_HOME_TCP_Z
+        self.view_steps_per_deg = STEPS_PER_DEG
+        self.view_signs = (VIEW_SIGN_A, VIEW_SIGN_B, VIEW_SIGN_C)
 
         self.plot_window = None
         self.plot_fig = None
@@ -267,3 +272,32 @@ class DeltaVisualizer:
             return np.array(elbows, dtype=float)
         except Exception:
             return elbows
+
+    def _angles_from_status(self, status: dict) -> tuple[float, float, float]:
+        # Lấy góc motor từ IK nếu có; nếu chưa có thì suy từ step A/B/C để 3D chạy live.
+        if status.get("xyzValid"):
+            return (
+                float(status.get("thetaA", 0.0)),
+                float(status.get("thetaB", 0.0)),
+                float(status.get("thetaC", 0.0)),
+            )
+        a_step = float(status.get("a", 0.0))
+        b_step = float(status.get("b", 0.0))
+        c_step = float(status.get("c", 0.0))
+        return (
+            self.view_home_theta_deg + self.view_signs[0] * a_step / self.view_steps_per_deg,
+            self.view_home_theta_deg + self.view_signs[1] * b_step / self.view_steps_per_deg,
+            self.view_home_theta_deg + self.view_signs[2] * c_step / self.view_steps_per_deg,
+        )
+
+    def _tcp_from_status(self, status: dict, theta: tuple[float, float, float]):
+        # Lấy vị trí TCP từ IK nếu có; nếu chưa có thì ước lượng Z từ góc trung bình.
+        if status.get("xyzValid"):
+            return (
+                float(status.get("x", 0.0)),
+                float(status.get("y", 0.0)),
+                float(status.get("z", -260.0)),
+            )
+        avg_theta = sum(theta) / 3.0
+        z = self.view_home_tcp_z - (avg_theta - self.view_home_theta_deg) * 2.0
+        return (0.0, 0.0, z)

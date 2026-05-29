@@ -53,6 +53,9 @@ class DeltaControlApp(ctk.CTk):
         self.serial.on_raw = self._on_raw_line
         self.camera = None
         self.camera_running = False
+        self.candy_detector = None
+        self.candy_detect_enabled = False
+        self._last_detection_log_ms = 0
 
         self.latest_status = {
             # Trạng thái mới nhất nhận từ ESP32, dùng để cập nhật UI và tính delta.
@@ -161,13 +164,42 @@ class DeltaControlApp(ctk.CTk):
             self.ui.set_camera_message("Cannot open camera")
             self.log(f"Cannot open camera index {index}")
 
+    def toggleCandyDetection(self):
+        # Bật/tắt YOLO detect kẹo trên frame camera hiện tại.
+        enabled = bool(self.ui.detect_candy_var.get())
+        if not enabled:
+            self.candy_detect_enabled = False
+            self.ui.set_detection_message("Candy detect off")
+            return
+
+        model_path = "best.pt"
+        try:
+            if self.candy_detector is None:
+                self.ui.set_detection_message("Loading best.pt...")
+                self.update_idletasks()
+                from handlers.candy_detector import CandyDetector
+
+                self.candy_detector = CandyDetector(model_path=model_path, conf=0.5)
+            self.candy_detect_enabled = True
+            self.ui.set_detection_message("Candy detect on")
+            self.log("Candy detector loaded: best.pt")
+        except Exception as exc:
+            self.candy_detect_enabled = False
+            self.ui.detect_candy_var.set(False)
+            self.ui.set_detection_message("Cannot load best.pt")
+            self.log(f"Candy detector error: {exc}")
+
     def change_camera(self, _label=None):
         # Đổi camera khi dropdown thay đổi trong lúc camera đang chạy.
         if self.camera and self.camera.is_running():
             index = self.ui.get_selected_camera_index()
             if self.camera.switch(index):
                 self.log(f"Camera switched: index {index}")
+                self.ui.set_camera_message("Switching camera...")
             else:
+                self.camera.stop()
+                self.camera_running = False
+                self.ui.set_camera_running(False)
                 self.ui.set_camera_message("Cannot switch camera")
 
     def _camera_loop(self):
@@ -175,8 +207,30 @@ class DeltaControlApp(ctk.CTk):
         if self.camera and self.camera.is_running():
             frame = self.camera.read_frame()
             if frame is not None:
+                if self.candy_detect_enabled and self.candy_detector:
+                    try:
+                        frame, detections = self.candy_detector.detect(frame)
+                        self.ui.update_detection_summary(detections)
+                        now = self._now_ms()
+                        if detections and now - self._last_detection_log_ms > 1000:
+                            first = detections[0]
+                            self.log(
+                                "Candy detected: "
+                                f"x={first['x']}, y={first['y']}, "
+                                f"conf={first['confidence']:.2f}"
+                            )
+                            self._last_detection_log_ms = now
+                    except Exception as exc:
+                        self.candy_detect_enabled = False
+                        self.ui.detect_candy_var.set(False)
+                        self.ui.set_detection_message("Detect error")
+                        self.log(f"Candy detect error: {exc}")
                 self.ui.update_camera_frame(frame)
         self.after(50, self._camera_loop)
+
+    def _now_ms(self):
+        # Lấy thời gian ms tương đối từ Tk để throttle log detect.
+        return int(float(self.tk.call("clock", "milliseconds")))
 
     def refresh_ports(self):
         # Cập nhật dropdown COM port.
@@ -231,10 +285,11 @@ class DeltaControlApp(ctk.CTk):
         self.after(20, self._poll_serial)
 
     def _status_poll_loop(self):
-        # Gửi {"cmd":"status"} mỗi 750ms, tránh spam serial quá nhanh.
+        # Khi robot đang chạy thì poll nhanh hơn để mô hình 3D bám theo thời gian thực.
         if self.serial.is_connected():
             self.requestStatus()
-        self.after(750, self._status_poll_loop)
+        moving = bool(self.latest_status.get("moving", False))
+        self.after(150 if moving else 750, self._status_poll_loop)
 
     def _on_serial_json(self, data: dict, raw: str):
         # ESP32 trả JSON hợp lệ.

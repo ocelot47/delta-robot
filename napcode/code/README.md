@@ -42,7 +42,7 @@ MG90S gripper:
 ## Install
 
 ```bash
-pip install customtkinter pyserial matplotlib numpy
+pip install customtkinter pyserial matplotlib numpy opencv-python pillow ultralytics
 ```
 
 Arduino libraries:
@@ -75,6 +75,16 @@ python main.py
 8. Use `Pick From A To B Simulation` for a step-position demo sequence. The
    sequence now closes the gripper at Position A and opens it at Position B.
 9. Use `Position` + `Move` only after IK config is correct for the real robot.
+
+Candy detection:
+
+- Put `best.pt` in the project root, next to `main.py`.
+- Start the app, scan/select camera, then press `Start Camera`.
+- Tick `Detect candy` in the Camera panel.
+- The preview draws bounding boxes and red center points. The panel shows the
+  first candy center as image pixel coordinates `x/y`.
+- Current detection is camera-only. It does not automatically move the robot
+  until camera-to-robot calibration is added.
 
 `Emergency Stop` stops app sequences and sends `{"cmd":"stop"}`. It does not
 disable the drivers.

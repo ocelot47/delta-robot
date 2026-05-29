@@ -8,6 +8,7 @@ large live robot visualization on the right, and a log console at the bottom.
 from __future__ import annotations
 
 import tkinter as tk
+from tkinter import TclError
 
 import customtkinter as ctk
 
@@ -35,6 +36,7 @@ class ControlPanel:
         self.camera_list: list[dict] = []
         self._camera_image = None
         self._latest_camera_frame = None
+        self.detect_candy_var = tk.BooleanVar(value=False)
 
         self._build_top_bar()
         self._build_left_panel()
@@ -302,6 +304,22 @@ class ControlPanel:
         self.camera_button = ctk.CTkButton(controls, text="Start Camera", width=120, command=self.app.toggle_camera)
         self.camera_button.grid(row=0, column=1)
 
+        detect_controls = ctk.CTkFrame(frame, fg_color="#f7f7f7")
+        detect_controls.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        detect_controls.grid_columnconfigure(1, weight=1)
+        ctk.CTkCheckBox(
+            detect_controls,
+            text="Detect candy",
+            variable=self.detect_candy_var,
+            command=self.app.toggleCandyDetection,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.detection_status_var = ctk.StringVar(value="Candy detect off")
+        self._label(
+            detect_controls,
+            textvariable=self.detection_status_var,
+            font_size=13,
+        ).grid(row=0, column=1, sticky="w")
+
     def _build_multi_motor_section(self, parent):
         # Điều khiển nhiều motor cùng lúc bằng lệnh move_abc.
         frame = self._section(parent, "Multi Motor Control")
@@ -460,11 +478,36 @@ class ControlPanel:
         # Đổi text nút Start/Stop camera theo trạng thái đang chạy.
         self.camera_button.configure(text="Stop Camera" if running else "Start Camera")
 
+    def set_detection_message(self, text: str):
+        # Cập nhật dòng trạng thái YOLO detect kẹo.
+        self.detection_status_var.set(text)
+
+    def update_detection_summary(self, detections: list[dict]):
+        # Hiển thị nhanh số kẹo detect được và tọa độ tâm kẹo đầu tiên.
+        if not detections:
+            self.detection_status_var.set("No candy")
+            return
+        first = detections[0]
+        self.detection_status_var.set(
+            f"{len(detections)} candy | x={first['x']} y={first['y']}"
+        )
+
     def set_camera_message(self, text: str):
         # Hiển thị thông báo trong khung preview khi chưa có frame camera.
-        self._camera_image = None
         self._latest_camera_frame = None
-        self.camera_label.configure(text=text, image=None)
+        old_image = self._camera_image
+        try:
+            self.camera_label.configure(text=text, image=None)
+        except TclError:
+            # Khi Tk image cũ đã bị hủy, CTkLabel có thể vẫn còn giữ tên pyimage.
+            # Xóa image trực tiếp ở label nội bộ rồi mới set text.
+            try:
+                self.camera_label._label.configure(image="")
+            except Exception:
+                pass
+            self.camera_label.configure(text=text)
+        self._camera_image = None
+        del old_image
 
     def _resize_camera_preview(self, _event=None):
         # Khi khung camera đổi kích thước, resize lại frame cuối cùng.
@@ -492,8 +535,17 @@ class ControlPanel:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(rgb)
         ctk_image = ctk.CTkImage(light_image=image, dark_image=image, size=(new_w, new_h))
+        old_image = self._camera_image
         self._camera_image = ctk_image
-        self.camera_label.configure(image=ctk_image, text="")
+        try:
+            self.camera_label.configure(image=ctk_image, text="")
+        except TclError:
+            try:
+                self.camera_label._label.configure(image="")
+            except Exception:
+                pass
+            self.camera_label.configure(image=ctk_image, text="")
+        del old_image
 
     def set_connected(self, connected: bool):
         # Cập nhật trạng thái nút Connect/Disconnect và label kết nối.
