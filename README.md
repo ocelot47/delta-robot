@@ -20,6 +20,7 @@ testing, and gripper experiments.
 - Assembly file (`assembly.sldasm`)
 - ESP32 firmware (`napcode/code/code.ino`)
 - Python desktop app (`napcode/code/main.py`)
+- Camera candy detection module (`napcode/code/handlers/candy_detector.py`)
 - Calibration measurement template (`napcode/code/calibration_measurements.md`)
 - Reference images used for documentation
 
@@ -48,14 +49,15 @@ Side view with height/clearance measurement for workspace and vertical layout va
 - `napcode/code/`: Python desktop app and ESP32 firmware
 - `napcode/code/code.ino`: ESP32 JSON-over-Serial firmware
 - `napcode/code/main.py`: desktop app entry point
+- `napcode/code/handlers/candy_detector.py`: YOLO candy detection helper
 - `napcode/code/calibration_measurements.md`: robot measurement worksheet
 
 ## Desktop App And Firmware
 
 The desktop app is built with Python, CustomTkinter, PySerial, Matplotlib, and
-NumPy. It provides compact controls on the left, a Matplotlib robot
-visualization on the right, menu items for plots, camera support, and a log
-console at the bottom.
+NumPy, OpenCV, Pillow, and Ultralytics. It provides compact controls on the
+left, a Matplotlib robot visualization on the right, menu items for plots,
+camera support, candy detection, and a log console at the bottom.
 
 The serial protocol is JSON-over-Serial for the current ESP32 firmware.
 
@@ -94,7 +96,7 @@ MG90S gripper:
 ## Install
 
 ```bash
-pip install customtkinter pyserial matplotlib numpy opencv-python pillow
+pip install customtkinter pyserial matplotlib numpy opencv-python pillow ultralytics
 ```
 
 Arduino libraries:
@@ -128,6 +130,16 @@ python main.py
 8. Use `Pick From A To B Simulation` for a step-position demo sequence. The
    sequence closes the gripper at Position A and opens it at Position B.
 9. Use `Position` + `Move` only after IK config is correct for the real robot.
+
+Candy detection:
+
+- Put `best.pt` in the app folder, next to `main.py`.
+- Start the app, scan/select camera, then press `Start Camera`.
+- Tick `Detect candy` in the Camera panel.
+- The preview draws bounding boxes and red center points. The panel shows the
+  first candy center as image pixel coordinates `x/y`.
+- Current detection is camera-only. It does not automatically move the robot
+  until camera-to-robot calibration is added.
 
 `Emergency Stop` stops app sequences and sends `{"cmd":"stop"}`. It does not
 disable the drivers.
@@ -173,6 +185,10 @@ Gripper status fields are included in normal status responses:
 {"gripperAttached":true,"gripperAngle":180,"gripperOpenAngle":180,"gripperClosedAngle":50}
 ```
 
+The Program menu from the reference app is present as a placeholder only. The
+original repo uses a different command protocol, so program upload was not
+copied into this ESP32 JSON app.
+
 ## Next Milestones
 
 - Finish mechanical assembly validation
@@ -189,6 +205,7 @@ Gripper status fields are included in normal status responses:
 - Embedded control (Arduino/ESP-style `.ino` workflow)
 - ESP32, DRV8825, limit switches, MG90S servo
 - Python desktop GUI with serial communication and robot visualization
+- OpenCV and Ultralytics YOLO for camera-based candy detection
 
 ## Note
 
