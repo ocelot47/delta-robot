@@ -478,6 +478,13 @@ class ControlPanel:
         # Đổi text nút Start/Stop camera theo trạng thái đang chạy.
         self.camera_button.configure(text="Stop Camera" if running else "Start Camera")
 
+    def set_camera_opening(self, opening: bool):
+        # Khóa nút trong lúc thread nền đang mở/đổi camera.
+        if opening:
+            self.camera_button.configure(text="Opening...", state="disabled")
+        else:
+            self.camera_button.configure(state="normal")
+
     def set_detection_message(self, text: str):
         # Cập nhật dòng trạng thái YOLO detect kẹo.
         self.detection_status_var.set(text)

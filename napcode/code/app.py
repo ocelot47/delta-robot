@@ -8,6 +8,8 @@ ESP32 with motor-step test commands only.
 from __future__ import annotations
 
 import json
+import queue
+import threading
 import tkinter as tk
 from tkinter import messagebox
 from collections.abc import Callable
@@ -53,8 +55,12 @@ class DeltaControlApp(ctk.CTk):
         self.serial.on_raw = self._on_raw_line
         self.camera = None
         self.camera_running = False
+        self.camera_opening = False
         self.candy_detector = None
+        self.candy_detector_loading = False
         self.candy_detect_enabled = False
+        self._detect_busy = False
+        self._last_detected_frame = None
         self._last_detection_log_ms = 0
 
         self.latest_status = {
@@ -83,6 +89,7 @@ class DeltaControlApp(ctk.CTk):
         self.pending_home_all_drop = False
         self.home_all_drop_running = False
         self._post_home_preview_after = None
+        self._ui_queue = queue.Queue()
 
         self._build_menu()
         self.ui = ControlPanel(self, self)
@@ -90,6 +97,7 @@ class DeltaControlApp(ctk.CTk):
         self.ui.set_connected(False)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._process_ui_queue()
         self._poll_serial()
         self._status_poll_loop()
         self._camera_loop()
@@ -135,7 +143,7 @@ class DeltaControlApp(ctk.CTk):
         if self.camera is None:
             self.camera = CameraHandler()
         self.ui.set_camera_message("Scanning cameras...")
-        self.camera.scan_async(lambda cams: self.after(0, lambda: self.ui.update_cameras(cams)))
+        self.camera.scan_async(lambda cams: self._post_ui(lambda: self.ui.update_cameras(cams)))
 
     def toggle_camera(self):
         # Bật/tắt camera preview, không liên quan tới firmware ESP32.
@@ -151,16 +159,34 @@ class DeltaControlApp(ctk.CTk):
         if self.camera.is_running():
             self.camera.stop()
             self.camera_running = False
+            self.camera_opening = False
             self.ui.set_camera_running(False)
             self.ui.set_camera_message("Camera stopped")
             return
+        if self.camera_opening:
+            return
 
         index = self.ui.get_selected_camera_index()
-        if self.camera.start(index):
+        self.camera_opening = True
+        self.ui.set_camera_opening(True)
+        self.ui.set_camera_message("Opening camera...")
+
+        def _on_started(ok: bool):
+            self._post_ui(lambda: self._finish_camera_start(index, ok))
+
+        self.camera.start_async(index, _on_started)
+
+    def _finish_camera_start(self, index: int, ok: bool):
+        # Nhận kết quả mở camera từ thread nền và cập nhật UI trên Tk thread.
+        self.camera_opening = False
+        self.ui.set_camera_opening(False)
+        if ok:
             self.camera_running = True
             self.ui.set_camera_running(True)
             self.log(f"Camera started: index {index}")
         else:
+            self.camera_running = False
+            self.ui.set_camera_running(False)
             self.ui.set_camera_message("Cannot open camera")
             self.log(f"Cannot open camera index {index}")
 
@@ -169,68 +195,154 @@ class DeltaControlApp(ctk.CTk):
         enabled = bool(self.ui.detect_candy_var.get())
         if not enabled:
             self.candy_detect_enabled = False
+            self._last_detected_frame = None
             self.ui.set_detection_message("Candy detect off")
             return
 
         model_path = "best.pt"
-        try:
-            if self.candy_detector is None:
-                self.ui.set_detection_message("Loading best.pt...")
-                self.update_idletasks()
-                from handlers.candy_detector import CandyDetector
+        if self.candy_detector is None:
+            if self.candy_detector_loading:
+                return
+            self.candy_detector_loading = True
+            self.ui.set_detection_message("Loading best.pt...")
+            threading.Thread(
+                target=self._load_candy_detector_worker,
+                args=(model_path,),
+                daemon=True,
+            ).start()
+            return
 
-                self.candy_detector = CandyDetector(model_path=model_path, conf=0.5)
-            self.candy_detect_enabled = True
-            self.ui.set_detection_message("Candy detect on")
-            self.log("Candy detector loaded: best.pt")
+        self.candy_detect_enabled = True
+        self.ui.set_detection_message("Candy detect on")
+
+    def _load_candy_detector_worker(self, model_path: str):
+        # Load YOLO model ngoài Tk thread vì import/model init có thể chậm.
+        try:
+            from handlers.candy_detector import CandyDetector
+
+            detector = CandyDetector(model_path=model_path, conf=0.5)
+            error = None
         except Exception as exc:
+            detector, error = None, exc
+        self._post_ui(lambda: self._finish_candy_detector_load(model_path, detector, error))
+
+    def _finish_candy_detector_load(self, model_path: str, detector, error):
+        # Hoàn tất bật/tắt detect trên Tk thread sau khi worker load model xong.
+        self.candy_detector_loading = False
+        if error is not None:
+            self.candy_detector = None
             self.candy_detect_enabled = False
             self.ui.detect_candy_var.set(False)
             self.ui.set_detection_message("Cannot load best.pt")
-            self.log(f"Candy detector error: {exc}")
+            self.log(f"Candy detector error: {error}")
+            return
+        self.candy_detector = detector
+        if not bool(self.ui.detect_candy_var.get()):
+            self.candy_detect_enabled = False
+            self.ui.set_detection_message("Candy detect off")
+            return
+        self.candy_detect_enabled = True
+        self.ui.set_detection_message("Candy detect on")
+        self.log(f"Candy detector loaded: {model_path}")
 
     def change_camera(self, _label=None):
         # Đổi camera khi dropdown thay đổi trong lúc camera đang chạy.
-        if self.camera and self.camera.is_running():
+        if self.camera and self.camera.is_running() and not self.camera_opening:
             index = self.ui.get_selected_camera_index()
-            if self.camera.switch(index):
-                self.log(f"Camera switched: index {index}")
-                self.ui.set_camera_message("Switching camera...")
-            else:
-                self.camera.stop()
-                self.camera_running = False
-                self.ui.set_camera_running(False)
-                self.ui.set_camera_message("Cannot switch camera")
+            self.camera_opening = True
+            self.ui.set_camera_opening(True)
+            self.ui.set_camera_message("Switching camera...")
+
+            def _on_switched(ok: bool):
+                self._post_ui(lambda: self._finish_camera_switch(index, ok))
+
+            self.camera.switch_async(index, _on_switched)
+
+    def _finish_camera_switch(self, index: int, ok: bool):
+        # Nhận kết quả đổi camera từ thread nền và cập nhật UI trên Tk thread.
+        self.camera_opening = False
+        self.ui.set_camera_opening(False)
+        if ok:
+            self.camera_running = True
+            self.ui.set_camera_running(True)
+            self.log(f"Camera switched: index {index}")
+        else:
+            self.camera_running = False
+            self.ui.set_camera_running(False)
+            self.ui.set_camera_message("Cannot switch camera")
 
     def _camera_loop(self):
         # Vòng lặp UI đọc frame camera định kỳ và đưa lên preview.
         if self.camera and self.camera.is_running():
             frame = self.camera.read_frame()
             if frame is not None:
+                display_frame = frame
                 if self.candy_detect_enabled and self.candy_detector:
-                    try:
-                        frame, detections = self.candy_detector.detect(frame)
-                        self.ui.update_detection_summary(detections)
-                        now = self._now_ms()
-                        if detections and now - self._last_detection_log_ms > 1000:
-                            first = detections[0]
-                            self.log(
-                                "Candy detected: "
-                                f"x={first['x']}, y={first['y']}, "
-                                f"conf={first['confidence']:.2f}"
-                            )
-                            self._last_detection_log_ms = now
-                    except Exception as exc:
-                        self.candy_detect_enabled = False
-                        self.ui.detect_candy_var.set(False)
-                        self.ui.set_detection_message("Detect error")
-                        self.log(f"Candy detect error: {exc}")
-                self.ui.update_camera_frame(frame)
+                    if self._last_detected_frame is not None:
+                        display_frame = self._last_detected_frame
+                    if not self._detect_busy:
+                        self._detect_busy = True
+                        threading.Thread(
+                            target=self._detect_frame_worker,
+                            args=(frame.copy(),),
+                            daemon=True,
+                        ).start()
+                self.ui.update_camera_frame(display_frame)
         self.after(50, self._camera_loop)
+
+    def _detect_frame_worker(self, frame):
+        # Chạy YOLO ngoài Tk thread để preview và các nút không bị đơ.
+        try:
+            annotated, detections = self.candy_detector.detect(frame)
+            error = None
+        except Exception as exc:
+            annotated, detections, error = None, [], exc
+        self._post_ui(lambda: self._finish_frame_detection(annotated, detections, error))
+
+    def _finish_frame_detection(self, annotated, detections: list[dict], error):
+        # Cập nhật kết quả detect trên Tk thread.
+        self._detect_busy = False
+        if not self.candy_detect_enabled:
+            return
+        if error is not None:
+            self.candy_detect_enabled = False
+            self._last_detected_frame = None
+            self.ui.detect_candy_var.set(False)
+            self.ui.set_detection_message("Detect error")
+            self.log(f"Candy detect error: {error}")
+            return
+        self._last_detected_frame = annotated
+        self.ui.update_detection_summary(detections)
+        now = self._now_ms()
+        if detections and now - self._last_detection_log_ms > 1000:
+            first = detections[0]
+            self.log(
+                "Candy detected: "
+                f"x={first['x']}, y={first['y']}, "
+                f"conf={first['confidence']:.2f}"
+            )
+            self._last_detection_log_ms = now
 
     def _now_ms(self):
         # Lấy thời gian ms tương đối từ Tk để throttle log detect.
         return int(float(self.tk.call("clock", "milliseconds")))
+
+    def _post_ui(self, callback: Callable[[], None]):
+        # Thread nền không gọi Tk trực tiếp; chỉ gửi việc về queue cho Tk thread.
+        self._ui_queue.put(callback)
+
+    def _process_ui_queue(self):
+        # Xử lý các callback từ worker thread trên đúng Tk thread.
+        while True:
+            try:
+                callback = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception as exc:
+                self.log(f"UI callback error: {exc}")
+        self.after(20, self._process_ui_queue)
 
     def refresh_ports(self):
         # Cập nhật dropdown COM port.
@@ -890,6 +1002,6 @@ class DeltaControlApp(ctk.CTk):
         # Dọn tài nguyên trước khi đóng app.
         self.stopCurrentSequence(send_stop=False)
         if self.camera:
-            self.camera.stop()
+            self.camera.stop(wait=True)
         self.serial.disconnect()
         self.destroy()
